@@ -1,0 +1,51 @@
+#!/home/admin/wordbot/.venv/bin/python
+"""One-shot manual trigger: post a Word of the Day right now."""
+
+import asyncio
+import os
+import sys
+
+import aiohttp
+import discord
+from dotenv import load_dotenv
+
+# Re-use the same modules as the bot.
+import dictionary
+from words import random_word, word_rank
+
+# Inline the embed builder so this script stays self-contained at runtime
+# while sharing the same look as the daily post.
+from embed import make_embed, WOTD_CHANNEL_ID
+
+load_dotenv()
+TOKEN = os.environ.get("DISCORD_TOKEN")
+
+
+async def main() -> None:
+    if not TOKEN:
+        print("DISCORD_TOKEN is not set.", file=sys.stderr)
+        sys.exit(1)
+    if not WOTD_CHANNEL_ID:
+        print("WOTD_CHANNEL_ID is not set.", file=sys.stderr)
+        sys.exit(1)
+
+    async with dictionary.make_session() as http, discord.Client(intents=discord.Intents.default()) as client:
+        await client.login(TOKEN)
+
+        channel = await client.fetch_channel(WOTD_CHANNEL_ID)
+
+        for _ in range(8):
+            word = random_word()
+            entry = await dictionary.lookup(http, word)
+            if entry is not None:
+                rank = word_rank(word)
+                await channel.send(embed=make_embed(entry, rank))
+                print(f"Posted: {entry.word}")
+                return
+
+        print("Could not find a word with a definition after 8 tries.", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
