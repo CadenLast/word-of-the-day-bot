@@ -42,17 +42,31 @@ async def fetch_random_definition(
     """Pick random words until one has a dictionary entry.
 
     Returns the entry and its usage rank, or (None, None) if none found.
+    Transient HTTP failures (e.g. a 502 from the dictionary API) are treated
+    like a missing entry so they don't escape and trigger discord.py's
+    task-loop auto-retry, which can otherwise post twice for one day.
     """
     for _ in range(max_tries):
         word = random_word()
-        result = await dictionary.lookup(http_session, word)
+        try:
+            result = await dictionary.lookup(http_session, word)
+        except aiohttp.ClientError:
+            continue
         if result is not None:
             return result, word_rank(word)
     return None, None
 
 
+_last_posted_date: datetime.date | None = None
+
+
 async def post_word_of_the_day() -> None:
     """Pick a random word and post it to the configured channel."""
+    global _last_posted_date
+    today = datetime.datetime.now(CHICAGO).date()
+    if _last_posted_date == today:
+        logging.warning("Already posted today (%s); skipping duplicate run.", today)
+        return
     channel = client.get_channel(WOTD_CHANNEL_ID)
     if channel is None:
         logging.warning("WOTD channel %s not found; skipping.", WOTD_CHANNEL_ID)
@@ -60,6 +74,7 @@ async def post_word_of_the_day() -> None:
     entry, rank = await fetch_random_definition()
     if entry is not None:
         await channel.send(embed=make_embed(entry, rank))
+        _last_posted_date = today
         logging.info("Posted Word of the Day: %s (rank %s)", entry.word, rank)
 
 
