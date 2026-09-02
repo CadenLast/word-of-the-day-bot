@@ -46,7 +46,7 @@ class Entry:
 
 async def lookup(session: aiohttp.ClientSession, word: str) -> Entry | None:
     """Look up a word, returning all meanings. None if no entry (HTTP 404)."""
-    async with session.get(API_URL.format(word=word), timeout=10) as resp:
+    async with session.get(API_URL.format(word=word), timeout=60) as resp:
         if resp.status == 404:
             return None
         resp.raise_for_status()
