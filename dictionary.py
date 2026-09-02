@@ -52,12 +52,14 @@ async def lookup(session: aiohttp.ClientSession, word: str) -> Entry | None:
 
     Retries a few times on transient failures (server 5xx errors, timeouts,
     dropped connections) before giving up, so a brief upstream hiccup doesn't
-    propagate up and stall the whole scheduled post.
+    propagate up and stall the whole scheduled post. The dictionary API can
+    take 30+ seconds to respond on a cache miss, so each attempt gets a
+    generous timeout rather than failing fast.
     """
     for attempt in range(MAX_RETRIES):
         is_last_attempt = attempt == MAX_RETRIES - 1
         try:
-            async with session.get(API_URL.format(word=word), timeout=10) as resp:
+            async with session.get(API_URL.format(word=word), timeout=60) as resp:
                 if resp.status == 404:
                     return None
                 if resp.status >= 500 and not is_last_attempt:
