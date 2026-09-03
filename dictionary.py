@@ -13,7 +13,7 @@ import aiohttp
 import certifi
 
 API_URL = "https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
-MAX_RETRIES = 3
+MAX_RETRIES = 2
 RETRY_DELAY_SECONDS = 2
 
 
