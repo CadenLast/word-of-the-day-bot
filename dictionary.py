@@ -1,8 +1,7 @@
-"""Thin async client for the Free Dictionary API (dictionaryapi.dev).
+"""Thin async client for Datamuse, with a dictionaryapi.dev fallback for
+words Datamuse doesn't have.
 
-No API key required. If you later want Merriam-Webster, you only need to
-swap out `lookup()` to call their endpoint with your key and map the
-response into the same `Entry` shape.
+No API key required for either source.
 """
 
 import asyncio
@@ -13,8 +12,11 @@ import aiohttp
 import certifi
 
 API_URL = "https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
-MAX_RETRIES = 2
+DATAMUSE_URL = "https://api.datamuse.com/words"
+MAX_RETRIES = 1
 RETRY_DELAY_SECONDS = 2
+
+_DATAMUSE_POS_NAMES = {"n": "noun", "v": "verb", "adj": "adjective", "adv": "adverb"}
 
 
 def make_session() -> aiohttp.ClientSession:
@@ -48,13 +50,31 @@ class Entry:
 
 
 async def lookup(session: aiohttp.ClientSession, word: str) -> Entry | None:
-    """Look up a word, returning all meanings. None if no entry (HTTP 404).
+    """Look up a word, returning all meanings, or None if no entry exists.
+
+    Tries Datamuse first (dictionaryapi.dev has been prone to extended
+    outages on cache-miss words), falling back to dictionaryapi.dev if
+    Datamuse is unavailable or doesn't have an entry.
+    """
+    try:
+        entry = await _lookup_datamuse(session, word)
+    except (aiohttp.ClientError, TimeoutError):
+        entry = None
+    if entry is not None:
+        return entry
+    try:
+        return await _lookup_primary(session, word)
+    except (aiohttp.ClientError, TimeoutError):
+        return None
+
+
+async def _lookup_primary(session: aiohttp.ClientSession, word: str) -> Entry | None:
+    """Look up a word via dictionaryapi.dev. None if no entry (HTTP 404).
 
     Retries a few times on transient failures (server 5xx errors, timeouts,
-    dropped connections) before giving up, so a brief upstream hiccup doesn't
-    propagate up and stall the whole scheduled post. The dictionary API can
-    take 30+ seconds to respond on a cache miss, so each attempt gets a
-    generous timeout rather than failing fast.
+    dropped connections) before giving up. The dictionary API can take 30+
+    seconds to respond on a cache miss, so each attempt gets a generous
+    timeout rather than failing fast.
     """
     for attempt in range(MAX_RETRIES):
         is_last_attempt = attempt == MAX_RETRIES - 1
@@ -97,3 +117,31 @@ async def lookup(session: aiohttp.ClientSession, word: str) -> Entry | None:
     if not meanings:
         return None
     return Entry(word=entry.get("word", word), phonetic=phonetic, meanings=meanings)
+
+
+async def _lookup_datamuse(session: aiohttp.ClientSession, word: str) -> Entry | None:
+    """Look up a word via Datamuse. None if it has no definitions.
+
+    Datamuse has no phonetics and coarser definitions than dictionaryapi.dev
+    (and pulls raw Wiktionary entries, including surnames/place names), but
+    it's been far more reliable than dictionaryapi.dev for cache-miss words.
+    """
+    async with session.get(
+        DATAMUSE_URL, params={"sp": word, "md": "d", "max": 1}, timeout=15
+    ) as resp:
+        resp.raise_for_status()
+        data = await resp.json()
+
+    if not data or data[0].get("word") != word or not data[0].get("defs"):
+        return None
+
+    meanings_by_pos: dict[str, list[Sense]] = {}
+    for raw in data[0]["defs"]:
+        pos, _, definition = raw.partition("\t")
+        pos_name = _DATAMUSE_POS_NAMES.get(pos, pos)
+        meanings_by_pos.setdefault(pos_name, []).append(Sense(definition.strip()))
+
+    meanings = [Meaning(pos, senses) for pos, senses in meanings_by_pos.items()]
+    if not meanings:
+        return None
+    return Entry(word=word, phonetic=None, meanings=meanings)
