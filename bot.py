@@ -1,6 +1,6 @@
 """A Discord bot that posts a Word of the Day every morning.
 
-Posts a random common English word (frequency ranks 1000-5000) with its
+Posts a random common English word (frequency ranks 50000-75000) with its
 definition to a configured channel at 10:00 AM America/Chicago, daily.
 
 Set DISCORD_TOKEN and WOTD_CHANNEL_ID in a .env file (see .env.example).
@@ -50,7 +50,7 @@ async def fetch_random_definition(
         word = random_word()
         try:
             result = await dictionary.lookup(http_session, word)
-        except aiohttp.ClientError:
+        except (aiohttp.ClientError, TimeoutError):
             continue
         if result is not None:
             return result, word_rank(word)
