@@ -5,6 +5,7 @@ No API key required for either source.
 """
 
 import asyncio
+import re
 import ssl
 from dataclasses import dataclass
 
@@ -17,6 +18,43 @@ MAX_RETRIES = 1
 RETRY_DELAY_SECONDS = 2
 
 _DATAMUSE_POS_NAMES = {"n": "noun", "v": "verb", "adj": "adjective", "adv": "adverb"}
+
+# Both sources pull raw Wiktionary entries, which mix in senses like "An
+# English surname originating as an occupation", "Acronym of National
+# Aeronautics and Space Administration", or "A river in Douglas County,
+# Oregon" alongside the common-word senses we actually want. Drop those
+# rather than the whole word, since a word like "smith" has a perfectly good
+# common-noun sense too.
+_PLACE_NOUN = (
+    r"ghost town|unincorporated community|community|township|county|borough"
+    r"|parish|province|country|village|town|city|hamlet|river|lake|creek"
+    r"|stream|mountain|island|bay"
+)
+_EXCLUDED_SENSE_RE = re.compile(
+    r"^(?:(?:a|an)\s+(?:\w+\s+){0,3}surname\b"
+    r"|surname\s+of\b"
+    r"|(?:acronym|initialism|abbreviation)\s+of\b"
+    r"|alternative letter-case form of\b"
+    r"|(?:a|an)\s+(?:\w+\s+){0,3}given name\b"
+    r"|(?:a|an)\s+(?:\w+\s+){0,3}(?:" + _PLACE_NOUN + r")\b.*\b(?:in|of)\b"
+    r"|(?:several|a number of)\s+(?:\w+\s+){0,2}"
+    r"(?:places|rivers?|townships?|villages?|towns?|counties|communities|lakes?|mountains?|islands?)\b)",
+    re.IGNORECASE,
+)
+# Named institutions (e.g. "Smith College") are identified by a capitalized
+# proper name in the source text, so this one must stay case-sensitive --
+# matching it case-insensitively would also exclude ordinary lowercase
+# definitions that merely mention "a college in ...".
+_NAMED_INSTITUTION_RE = re.compile(
+    r"^[A-Z][\w'.-]*(?:\s+[A-Z][\w'.-]*){0,3}\s+(?:College|University|Township)\b"
+)
+
+
+def _is_excluded_sense(definition: str) -> bool:
+    """True if a definition marks the word as a surname, given name, place
+    name, named institution, or abbreviation rather than a common word."""
+    definition = definition.strip()
+    return bool(_EXCLUDED_SENSE_RE.match(definition)) or bool(_NAMED_INSTITUTION_RE.match(definition))
 
 
 def make_session() -> aiohttp.ClientSession:
@@ -109,7 +147,7 @@ async def _lookup_primary(session: aiohttp.ClientSession, word: str) -> Entry | 
         senses = [
             Sense(d["definition"], d.get("example"))
             for d in meaning.get("definitions", [])
-            if d.get("definition")
+            if d.get("definition") and not _is_excluded_sense(d["definition"])
         ]
         if senses:
             meanings.append(Meaning(meaning.get("partOfSpeech", ""), senses))
@@ -138,10 +176,13 @@ async def _lookup_datamuse(session: aiohttp.ClientSession, word: str) -> Entry |
     meanings_by_pos: dict[str, list[Sense]] = {}
     for raw in data[0]["defs"]:
         pos, _, definition = raw.partition("\t")
+        definition = definition.strip()
+        if _is_excluded_sense(definition):
+            continue
         pos_name = _DATAMUSE_POS_NAMES.get(pos, pos)
-        meanings_by_pos.setdefault(pos_name, []).append(Sense(definition.strip()))
+        meanings_by_pos.setdefault(pos_name, []).append(Sense(definition))
 
-    meanings = [Meaning(pos, senses) for pos, senses in meanings_by_pos.items()]
+    meanings = [Meaning(pos, senses) for pos, senses in meanings_by_pos.items() if senses]
     if not meanings:
         return None
     return Entry(word=word, phonetic=None, meanings=meanings)
