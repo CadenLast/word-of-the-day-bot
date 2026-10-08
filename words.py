@@ -9,6 +9,7 @@ everyday words but before the obscure ones the dictionary won't have.
 import random
 import re
 
+from english_words import get_english_words_set
 from wordfreq import top_n_list
 
 # Only keep plain alphabetic words (drop contractions, numbers, etc.).
@@ -16,6 +17,10 @@ _ALPHA = re.compile(r"^[a-z]+$")
 
 START_RANK = 50000
 END_RANK = 75000
+
+# Lowercase-only entries from Webster's 2nd; proper nouns are capitalized
+# there, so membership filters out names, places and acronyms.
+_DICTIONARY = get_english_words_set(["web2"], lower=False, alpha=True)
 
 # Full frequency-ranked list up to END_RANK, most common first. Built once
 # at import time and reused for both sampling and rank lookups.
@@ -27,7 +32,7 @@ _RANK = {word: i + 1 for i, word in enumerate(_RANKED)}
 def build_word_pool(start_rank: int = START_RANK, end_rank: int = END_RANK) -> list[str]:
     """Return common English words ranked between start_rank and end_rank."""
     sliced = _RANKED[start_rank - 1 : end_rank]
-    return [w for w in sliced if _ALPHA.match(w) and len(w) > 2]
+    return [w for w in sliced if _ALPHA.match(w) and len(w) > 2 and w in _DICTIONARY]
 
 
 # Build once at import time so we don't recompute on every call.

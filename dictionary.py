@@ -53,7 +53,7 @@ _NAMED_INSTITUTION_RE = re.compile(
 def _is_excluded_sense(definition: str) -> bool:
     """True if a definition marks the word as a surname, given name, place
     name, named institution, or abbreviation rather than a common word."""
-    definition = definition.strip()
+    definition = re.sub(r"^(?:\([^)]*\)\s*)+", "", definition.strip())
     return bool(_EXCLUDED_SENSE_RE.match(definition)) or bool(_NAMED_INSTITUTION_RE.match(definition))
 
 
